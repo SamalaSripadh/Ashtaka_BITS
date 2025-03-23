@@ -23,11 +23,12 @@ import {
   Alert,
   CircularProgress,
 } from '@mui/material';
-import { EventAvailable, LocationOn, AttachMoney, Person } from '@mui/icons-material';
+import { EventAvailable, LocationOn, AttachMoney, Person, QrCode } from '@mui/icons-material';
 import { useFormik } from 'formik';
 import * as Yup from 'yup';
 import { toast } from 'react-toastify';
 import { API_URL } from '../../config';
+import { QRCodeSVG } from 'qrcode.react';
 
 interface Event {
   _id: string;
@@ -56,6 +57,54 @@ interface FormValues {
   bookerName: string;
 }
 
+interface BookingResponse {
+  success: boolean;
+  message?: string;
+  data: {
+    qrCode: {
+      id: string;
+      e: string;
+      t: number;
+      ts: number;
+    };
+    qrCodeImage: string;
+    bookingReference: string;
+    // ... other booking fields
+  };
+}
+
+const styles = {
+  bookingSuccess: {
+    marginTop: '2rem',
+    padding: '2rem',
+    backgroundColor: '#f8f9fa',
+    borderRadius: '8px',
+    textAlign: 'center' as const
+  },
+  ticketDetails: {
+    marginTop: '1rem'
+  },
+  qrCodeContainer: {
+    marginTop: '1.5rem',
+    display: 'flex',
+    flexDirection: 'column' as const,
+    alignItems: 'center',
+    gap: '1rem'
+  },
+  downloadTicketBtn: {
+    marginTop: '1rem',
+    padding: '0.5rem 1rem',
+    backgroundColor: '#1976d2',
+    color: 'white',
+    border: 'none',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    '&:hover': {
+      backgroundColor: '#1565c0'
+    }
+  }
+};
+
 const EventDetails = () => {
   const { id } = useParams();
   const [openBooking, setOpenBooking] = useState(false);
@@ -63,25 +112,48 @@ const EventDetails = () => {
   const [bookingConfirmed, setBookingConfirmed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [event, setEvent] = useState<Event | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [bookingReference, setBookingReference] = useState<string>('');
+  const [bookingData, setBookingData] = useState<BookingResponse['data'] | null>(null);
+  const [bookingSuccess, setBookingSuccess] = useState(false);
 
   useEffect(() => {
+    // Check if user is admin
+    const token = localStorage.getItem('token');
+    if (token) {
+      try {
+        const payload = JSON.parse(atob(token.split('.')[1]));
+        setIsAdmin(payload.role === 'admin');
+      } catch (error) {
+        console.error('Error parsing token:', error);
+      }
+    }
     fetchEventDetails();
   }, [id]);
 
   const fetchEventDetails = async () => {
     try {
+      if (!id) {
+        throw new Error('Event ID is missing');
+      }
+
       setLoading(true);
       const response = await fetch(`${API_URL}/api/events/${id}`);
-      const data = await response.json();
       
       if (!response.ok) {
+        const data = await response.json();
         throw new Error(data.message || 'Failed to fetch event details');
+      }
+
+      const data = await response.json();
+      if (!data.data) {
+        throw new Error('Event not found');
       }
 
       setEvent(data.data);
     } catch (error) {
       console.error('Error fetching event details:', error);
-      toast.error('Failed to load event details');
+      toast.error(error instanceof Error ? error.message : 'Failed to load event details');
     } finally {
       setLoading(false);
     }
@@ -93,37 +165,51 @@ const EventDetails = () => {
     try {
       if (!event) return;
 
-      // Update available tickets
-      const ticketsBooked = values.ticketCount;
-      const updatedAvailableTickets = event.availableTickets - ticketsBooked;
-      
-      // Store updated ticket count in localStorage
-      const eventKey = `event_${event._id}`;
-      const updatedEvent = {
-        ...event,
-        availableTickets: updatedAvailableTickets
-      };
-      localStorage.setItem(eventKey, JSON.stringify(updatedEvent));
-      
-      setEvent(updatedEvent);
+      const token = localStorage.getItem('token');
+      if (!token) {
+        toast.error('Please login to book tickets');
+        return;
+      }
 
-      // Store booking in localStorage
-      const existingBookings = JSON.parse(localStorage.getItem('bookings') || '[]');
-      const newBooking = {
-        ...event,
-        bookingId: Math.random().toString(36).substr(2, 9),
-        ticketCount: ticketsBooked,
-        status: 'confirmed',
-        bookerName: values.bookerName,
+      const bookingData = {
+        event: event._id,
+        ticketCount: values.ticketCount,
+        totalAmount: values.ticketCount * event.ticketPrice,
         attendees: values.attendees,
-        bookingDate: new Date().toISOString(),
+        paymentMethod: values.paymentMethod,
+        bookerName: values.bookerName,
+        status: 'confirmed',
+        paymentStatus: 'completed'
       };
-      localStorage.setItem('bookings', JSON.stringify([...existingBookings, newBooking]));
 
-      setBookingConfirmed(true);
-      toast.success('Booking confirmed successfully!');
+      const response = await fetch(`${API_URL}/api/bookings`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(bookingData)
+      });
+
+      const result: BookingResponse = await response.json();
+
+      if (response.ok) {
+        toast.success('Booking successful!');
+        setBookingSuccess(true);
+        setBookingData(result.data);
+        setBookingConfirmed(true);
+        setBookingReference(result.data.bookingReference);
+        setEvent(prev => prev ? {
+          ...prev,
+          availableTickets: prev.availableTickets - values.ticketCount
+        } : null);
+      } else {
+        toast.error(result.message || 'Booking failed');
+      }
+
     } catch (error) {
-      toast.error('Booking failed. Please try again.');
+      console.error('Error creating booking:', error);
+      toast.error(error instanceof Error ? error.message : 'Booking failed. Please try again.');
     }
   };
 
@@ -461,182 +547,242 @@ const EventDetails = () => {
         Thank you for your booking. A confirmation email has been sent to your email address.
       </Typography>
       <Alert severity="success" sx={{ mb: 3 }}>
-        Booking Reference: {Math.random().toString(36).substr(2, 9).toUpperCase()}
+        Booking Reference: {bookingData?.bookingReference}
       </Alert>
+      {bookingData && (
+        <Box sx={{
+          mt: 3,
+          p: 3,
+          bgcolor: '#f8f9fa',
+          borderRadius: 2,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: 2
+        }}>
+          <Typography variant="h6">Your Ticket</Typography>
+          <Box sx={{
+            width: 250,
+            height: 250,
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            bgcolor: 'white',
+            p: 2,
+            borderRadius: 1,
+            boxShadow: 1
+          }}>
+            <Box className="qr-code">
+              <QRCodeSVG
+                value={JSON.stringify({
+                  bookingReference: bookingData.bookingReference,
+                  eventId: event?._id,
+                  ticketCount: formik.values.ticketCount
+                })}
+                size={200}
+                level="H"
+                includeMargin={true}
+              />
+            </Box>
+          </Box>
+          <Typography variant="body2" color="text.secondary">
+            Scan this QR code at the event entrance
+          </Typography>
+          <Button
+            variant="contained"
+            color="primary"
+            onClick={() => {
+              const svg = document.querySelector('.qr-code svg');
+              if (!svg) return;
+
+              const canvas = document.createElement('canvas');
+              const svgData = new XMLSerializer().serializeToString(svg);
+              const img = new Image();
+              
+              img.onload = () => {
+                canvas.width = img.width;
+                canvas.height = img.height;
+                const ctx = canvas.getContext('2d');
+                if (!ctx) return;
+                ctx.drawImage(img, 0, 0);
+                
+                canvas.toBlob((blob) => {
+                  if (!blob) return;
+                  const url = URL.createObjectURL(blob);
+                  const link = document.createElement('a');
+                  link.href = url;
+                  link.download = `ticket-${bookingData.bookingReference}.png`;
+                  document.body.appendChild(link);
+                  link.click();
+                  document.body.removeChild(link);
+                  URL.revokeObjectURL(url);
+                }, 'image/png');
+              };
+              
+              img.src = 'data:image/svg+xml;base64,' + btoa(svgData);
+            }}
+            startIcon={<QrCode />}
+            sx={{ mt: 2 }}
+          >
+            Download Ticket
+          </Button>
+        </Box>
+      )}
       <Button
         variant="contained"
         onClick={() => {
           setOpenBooking(false);
           setBookingConfirmed(false);
           setActiveStep(0);
+          window.location.href = '/dashboard';
         }}
+        sx={{ mt: 3 }}
       >
-        Close
+        View My Bookings
       </Button>
     </Box>
   );
 
   if (loading) {
     return (
-      <Container sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '60vh' }}>
-        <CircularProgress />
+      <Container maxWidth="lg" sx={{ py: 4 }}>
+        <Box display="flex" justifyContent="center" alignItems="center" minHeight="60vh">
+          <CircularProgress />
+        </Box>
       </Container>
     );
   }
 
   if (!event) {
     return (
-      <Container>
-        <Typography variant="h5" align="center" sx={{ my: 4 }}>
-          Event not found
-        </Typography>
+      <Container maxWidth="lg" sx={{ py: 4 }}>
+        <Alert severity="error">
+          Event not found or has been removed.
+        </Alert>
       </Container>
     );
   }
 
   return (
     <Container maxWidth="lg" sx={{ py: 4 }}>
-      <Grid container spacing={4}>
-        {/* Event Image */}
-        <Grid item xs={12}>
-          <Box
-            component="img"
-            src={event.image || 'https://freshproductions.co.uk/wp-content/uploads/2019/11/fresh-events-1.jpg'}
-            alt={event.title}
-            onError={(e: React.SyntheticEvent<HTMLImageElement>) => {
-              e.currentTarget.src = 'https://freshproductions.co.uk/wp-content/uploads/2019/11/fresh-events-1.jpg';
-            }}
-            sx={{
-              width: '100%',
-              height: '400px',
-              objectFit: 'cover',
-              borderRadius: 2,
-              boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
-            }}
-          />
-        </Grid>
-
-        {/* Event Details */}
+      <Grid container spacing={3}>
         <Grid item xs={12} md={8}>
-          <Typography variant="h3" gutterBottom>
-            {event.title}
-          </Typography>
-          <Box sx={{ mb: 4 }}>
-            <Typography variant="body1" paragraph>
-              {event.description}
+          <Paper elevation={3} sx={{ p: 3, height: '100%' }}>
+            <Typography variant="h4" gutterBottom>
+              {event.title}
             </Typography>
-          </Box>
-
-          <Grid container spacing={3} sx={{ mb: 4 }}>
-            <Grid item xs={12} sm={4}>
-              <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                <EventAvailable sx={{ mr: 1, color: 'primary.main' }} />
-                <Box>
-                  <Typography variant="subtitle2" color="text.secondary">
-                    Date & Time
-                  </Typography>
-                  <Typography variant="body1">
-                    {new Date(event.date).toLocaleDateString()} at {event.time}
-                  </Typography>
-                </Box>
-              </Box>
-            </Grid>
-            <Grid item xs={12} sm={4}>
-              <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                <LocationOn sx={{ mr: 1, color: 'primary.main' }} />
-                <Box>
-                  <Typography variant="subtitle2" color="text.secondary">
-                    Location
-                  </Typography>
-                  <Typography variant="body1">{event.location}</Typography>
-                </Box>
-              </Box>
-            </Grid>
-            <Grid item xs={12} sm={4}>
-              <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                <Box>
-                  <Typography variant="subtitle2" color="text.secondary">
-                    Price
-                  </Typography>
-                  <Typography variant="body1">₹{event.ticketPrice}</Typography>
-                </Box>
-              </Box>
-            </Grid>
-          </Grid>
-        </Grid>
-
-        {/* Booking Section */}
-        <Grid item xs={12} md={4}>
-          <Paper elevation={3} sx={{ p: 3 }}>
-            <Typography variant="h5" gutterBottom>
-              Book Your Tickets
-            </Typography>
-            <Divider sx={{ my: 2 }} />
-            <Box sx={{ mb: 3 }}>
-              <Typography color="text.secondary" gutterBottom>
-                Available Tickets
-              </Typography>
-              <Typography variant="h6" color="primary.main">
-                {event.availableTickets} / {event.capacity}
+            <Box sx={{ my: 2 }}>
+              <Typography variant="body1" paragraph>
+                {event.description}
               </Typography>
             </Box>
-            <Button
-              variant="contained"
-              size="large"
-              fullWidth
-              sx={{ mb: 2 }}
-              onClick={() => setOpenBooking(true)}
-            >
-              Book Now
-            </Button>
-            <Typography variant="body2" color="text.secondary" align="center">
-              * Tickets are non-refundable
+            <Divider sx={{ my: 2 }} />
+            <Grid container spacing={2}>
+              <Grid item xs={12} sm={6}>
+                <Box display="flex" alignItems="center" gap={1}>
+                  <EventAvailable />
+                  <Typography>
+                    {event.date} at {event.time}
+                  </Typography>
+                </Box>
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <Box display="flex" alignItems="center" gap={1}>
+                  <LocationOn />
+                  <Typography>{event.location}</Typography>
+                </Box>
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <Box display="flex" alignItems="center" gap={1}>
+                  <AttachMoney />
+                  <Typography>₹{event.ticketPrice} per ticket</Typography>
+                </Box>
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <Box display="flex" alignItems="center" gap={1}>
+                  <Person />
+                  <Typography>{event.availableTickets} tickets available</Typography>
+                </Box>
+              </Grid>
+            </Grid>
+          </Paper>
+        </Grid>
+        <Grid item xs={12} md={4}>
+          <Paper elevation={3} sx={{ p: 3 }}>
+            <Typography variant="h6" gutterBottom>
+              Ticket Information
             </Typography>
+            <Box sx={{ my: 2 }}>
+              <Typography variant="body1">
+                Available Tickets: {event.availableTickets}
+              </Typography>
+              <Typography variant="body1">
+                Price per Ticket: ₹{event.ticketPrice}
+              </Typography>
+            </Box>
+            {!isAdmin && event.availableTickets > 0 && (
+              <Button
+                variant="contained"
+                fullWidth
+                onClick={() => setOpenBooking(true)}
+                sx={{
+                  mt: 2,
+                  background: 'linear-gradient(45deg, #7C3AED 30%, #EC4899 90%)',
+                  '&:hover': {
+                    background: 'linear-gradient(45deg, #6D28D9 30%, #DB2777 90%)',
+                  },
+                }}
+              >
+                Book Now
+              </Button>
+            )}
+            {!isAdmin && event.availableTickets === 0 && (
+              <Alert severity="warning" sx={{ mt: 2 }}>
+                Sorry, this event is sold out!
+              </Alert>
+            )}
           </Paper>
         </Grid>
       </Grid>
-
+      
       {/* Booking Dialog */}
-      <Dialog
-        open={openBooking}
-        onClose={() => !bookingConfirmed && setOpenBooking(false)}
-        maxWidth="md"
-        fullWidth
-      >
-        <DialogTitle>
-          {bookingConfirmed ? 'Booking Confirmation' : 'Book Event Tickets'}
-        </DialogTitle>
-        <DialogContent>
-          {bookingConfirmed ? (
-            renderBookingConfirmation()
-          ) : (
-            <>
-              <Stepper activeStep={activeStep} sx={{ py: 3 }}>
-                {steps.map((label) => (
-                  <Step key={label}>
-                    <StepLabel>{label}</StepLabel>
-                  </Step>
-                ))}
-              </Stepper>
-              {renderStepContent(activeStep)}
-            </>
-          )}
-        </DialogContent>
-        {!bookingConfirmed && (
-          <DialogActions sx={{ px: 3, pb: 3 }}>
-            <Button onClick={() => setOpenBooking(false)}>Cancel</Button>
-            {activeStep > 0 && (
-              <Button onClick={handleBack}>Back</Button>
+      {!isAdmin && (
+        <Dialog open={openBooking} onClose={() => setOpenBooking(false)} maxWidth="md" fullWidth>
+          <DialogTitle>
+            {bookingConfirmed ? 'Booking Confirmation' : 'Book Event Tickets'}
+          </DialogTitle>
+          <DialogContent>
+            {bookingConfirmed ? (
+              renderBookingConfirmation()
+            ) : (
+              <>
+                <Stepper activeStep={activeStep} sx={{ py: 3 }}>
+                  {steps.map((label) => (
+                    <Step key={label}>
+                      <StepLabel>{label}</StepLabel>
+                    </Step>
+                  ))}
+                </Stepper>
+                {renderStepContent(activeStep)}
+              </>
             )}
-            <Button
-              variant="contained"
-              onClick={handleNext}
-            >
-              {activeStep === steps.length - 1 ? 'Confirm Booking' : 'Next'}
-            </Button>
-          </DialogActions>
-        )}
-      </Dialog>
+          </DialogContent>
+          {!bookingConfirmed && (
+            <DialogActions sx={{ px: 3, pb: 3 }}>
+              <Button onClick={() => setOpenBooking(false)}>Cancel</Button>
+              {activeStep > 0 && (
+                <Button onClick={handleBack}>Back</Button>
+              )}
+              <Button
+                variant="contained"
+                onClick={handleNext}
+              >
+                {activeStep === steps.length - 1 ? 'Confirm Booking' : 'Next'}
+              </Button>
+            </DialogActions>
+          )}
+        </Dialog>
+      )}
     </Container>
   );
 };

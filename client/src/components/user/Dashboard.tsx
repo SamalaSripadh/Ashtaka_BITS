@@ -19,6 +19,10 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
 } from '@mui/material';
 import {
   Event,
@@ -27,6 +31,7 @@ import {
   LocationOn,
   CalendarMonth,
   EventSeat,
+  QrCode2 as QrCodeIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../../context/AuthContext';
 import { Link } from 'react-router-dom';
@@ -40,12 +45,15 @@ interface Booking {
     title: string;
     date: string;
     time: string;
+    location: string;
     ticketPrice: number;
   };
   ticketCount: number;
   totalAmount: number;
   status: 'pending' | 'confirmed' | 'cancelled';
   bookingDate: string;
+  qrCodeImage: string;
+  bookingReference: string;
 }
 
 const UserDashboard: React.FC = () => {
@@ -53,6 +61,7 @@ const UserDashboard: React.FC = () => {
   const { user } = useAuth();
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedQR, setSelectedQR] = useState<{ image: string; reference: string } | null>(null);
 
   const loadBookings = async () => {
     try {
@@ -75,6 +84,15 @@ const UserDashboard: React.FC = () => {
 
       const data = await response.json();
       setBookings(data.data);
+
+      // Fetch user name
+      const userResponse = await fetch(`${API_URL}/api/users/me`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      const userData = await userResponse.json();
+      localStorage.setItem('userName', userData.data.name);
     } catch (error) {
       console.error('Error loading bookings:', error);
       toast.error('Failed to load bookings');
@@ -99,6 +117,25 @@ const UserDashboard: React.FC = () => {
         return 'error';
       default:
         return 'default';
+    }
+  };
+
+  const handleShowQR = (qrCodeImage: string, bookingReference: string) => {
+    setSelectedQR({ image: qrCodeImage, reference: bookingReference });
+  };
+
+  const handleCloseQR = () => {
+    setSelectedQR(null);
+  };
+
+  const handleDownloadQR = () => {
+    if (selectedQR) {
+      const link = document.createElement('a');
+      link.href = selectedQR.image;
+      link.download = `ticket-${selectedQR.reference}.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
     }
   };
 
@@ -139,7 +176,7 @@ const UserDashboard: React.FC = () => {
       >
         <Box sx={{ position: 'relative', zIndex: 1 }}>
           <Typography variant="h3" gutterBottom fontWeight="bold">
-            Welcome, {user?.name || 'Guest'}!
+            Welcome, {localStorage.getItem('userName') || 'Guest'}!
           </Typography>
           <Typography variant="h6" sx={{ opacity: 0.9, mb: 3 }}>
             Manage your event bookings and tickets
@@ -148,8 +185,8 @@ const UserDashboard: React.FC = () => {
             variant="contained"
             color="secondary"
             size="large"
-            component="a"
-            href="/events"
+            component={Link}
+            to="/events"
             sx={{
               px: 4,
               py: 1.5,
@@ -253,8 +290,8 @@ const UserDashboard: React.FC = () => {
             variant="contained"
             color="primary"
             size="large"
-            component="a"
-            href="/events"
+            component={Link}
+            to="/events"
             sx={{
               mt: 2,
               px: 4,
@@ -285,6 +322,7 @@ const UserDashboard: React.FC = () => {
                         <TableCell>Tickets</TableCell>
                         <TableCell>Total Price</TableCell>
                         <TableCell>Status</TableCell>
+                        <TableCell>QR Code</TableCell>
                       </TableRow>
                     </TableHead>
                     <TableBody>
@@ -302,6 +340,17 @@ const UserDashboard: React.FC = () => {
                               size="small"
                             />
                           </TableCell>
+                          <TableCell>
+                            <Button
+                              variant="contained"
+                              color="primary"
+                              size="small"
+                              startIcon={<QrCodeIcon />}
+                              onClick={() => handleShowQR(booking.qrCodeImage, booking.bookingReference)}
+                            >
+                              View Ticket
+                            </Button>
+                          </TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -312,6 +361,34 @@ const UserDashboard: React.FC = () => {
           </Grid>
         </Grid>
       )}
+
+      {/* QR Code Dialog */}
+      <Dialog open={!!selectedQR} onClose={handleCloseQR}>
+        <DialogTitle>Your Ticket QR Code</DialogTitle>
+        <DialogContent>
+          {selectedQR && (
+            <Box sx={{ textAlign: 'center', py: 2 }}>
+              <img 
+                src={selectedQR.image} 
+                alt="Ticket QR Code"
+                style={{ width: '200px', height: '200px' }}
+              />
+              <Typography variant="body2" sx={{ mt: 2 }}>
+                Booking Reference: {selectedQR.reference}
+              </Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                Show this QR code at the event entrance
+              </Typography>
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseQR}>Close</Button>
+          <Button onClick={handleDownloadQR} variant="contained" color="primary">
+            Download
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Container>
   );
 };

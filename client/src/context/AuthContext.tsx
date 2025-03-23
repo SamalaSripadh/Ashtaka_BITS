@@ -81,10 +81,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (token && storedUser) {
       try {
         const parsedUser = JSON.parse(storedUser);
-        setUser(parsedUser);
-        
-        // Set default axios authorization header
-        axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+        // Validate token with the server
+        axios.get('http://localhost:5001/api/users/me', {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        }).then(response => {
+          setUser(parsedUser);
+          axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+        }).catch(error => {
+          // If token is invalid, clear storage
+          localStorage.removeItem('token');
+          localStorage.removeItem('user');
+          setUser(null);
+        });
       } catch (error) {
         console.error('Error parsing stored user:', error);
         localStorage.removeItem('token');

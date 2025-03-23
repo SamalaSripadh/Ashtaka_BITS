@@ -37,30 +37,31 @@ const AdminLogin: React.FC = () => {
     },
     validationSchema: Yup.object({
       email: Yup.string().email('Invalid email address').required('Required'),
-      password: Yup.string().min(6, 'Must be at least 6 characters').required('Required'),
+      password: Yup.string().required('Required'),
     }),
     onSubmit: async (values) => {
       try {
-        const requestData = {
-          ...values,
-          isAdminLogin: true
-        };
-        
-        // Send admin login request
-        const response = await fetch(`${API_URL}/api/auth/login`, {
+        console.log('Attempting admin login with:', values);
+        console.log('API URL:', API_URL);
+
+        // Send admin login request to the new endpoint
+        const response = await fetch(`${API_URL}/api/admin/login`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'Accept': 'application/json',
           },
-          body: JSON.stringify(requestData),
+          body: JSON.stringify(values),
         });
 
         const data = await response.json();
+        console.log('Server response:', data);
 
         if (!response.ok) {
           throw new Error(data.message || 'Login failed');
         }
+
+        console.log('Login successful, user data:', data.user);
 
         // Store user data and token
         localStorage.setItem('user', JSON.stringify(data.user));

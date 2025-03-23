@@ -13,7 +13,7 @@ import Events from './components/pages/Events';
 import EventDetails from './components/pages/EventDetails';
 import Login from './components/auth/Login';
 import Register from './components/auth/Register';
-import AdminDashboard from './components/admin/Dashboard';
+import AdminDashboard from './components/admin/AdminDashboard';
 import UserDashboard from './components/user/Dashboard';
 import PrivateRoute from './components/routing/PrivateRoute';
 import AdminRoute from './components/routing/AdminRoute';
@@ -22,6 +22,8 @@ import About from './components/pages/About';
 import Contact from './components/pages/Contact';
 import AdminLogin from './components/auth/AdminLogin';
 import CreateEvent from './components/admin/CreateEvent';
+import AdminCheckIn from './components/pages/AdminCheckIn';
+import CheckInScanner from './components/admin/CheckInScanner';
 
 const theme = createTheme({
   palette: {
@@ -71,6 +73,14 @@ const AppRoutes = () => {
         element={
           <AdminRoute>
             <CreateEvent />
+          </AdminRoute>
+        }
+      />
+      <Route
+        path="/admin/check-in"
+        element={
+          <AdminRoute>
+            <CheckInScanner />
           </AdminRoute>
         }
       />
